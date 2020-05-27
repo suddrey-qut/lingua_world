@@ -1,0 +1,62 @@
+#!/usr/bin/env python
+import rospy
+import json
+
+from geometry_msgs.msg import PoseStamped, Pose
+from wire_msgs.msg import WorldState
+
+from lingua_world.srv import FindObjects, FindObjectsResponse
+from lingua_world.srv import GetObjectPose, GetObjectPoseResponse
+
+world_state = None
+
+def get_objects(req):
+  search = json.loads(req.query)
+  found = []
+  
+  for obj in world_state.objects:
+    matches = []
+
+    for prop in obj.properties:
+      prop_id = prop.attribute
+      if prop_id in search and search[prop_id] in prop.pdf.values:
+        matches.append(prop_id)
+    
+    if len(set(search.keys()).difference(matches)) == 0:
+      found.append(obj.ID)
+
+  return FindObjectsResponse(ids=found)
+
+def get_object_position(req):
+  object_id = req.object_id
+
+  for obj in world_state.objects:
+    if obj.ID == object_id:
+      for prop in obj.properties:
+        if prop.attribute == 'position':
+          ps = PoseStamped()
+
+          ps.header.frame_id = world_state.header.frame_id
+          ps.header.stamp = rospy.Time.now()
+
+          ps.pose.position.x = prop.pdf.data[1]
+          ps.pose.position.y = prop.pdf.data[2]
+          ps.pose.position.z = prop.pdf.data[3]
+          
+          ps.pose.orientation.w = 1
+
+          return GetObjectPoseResponse(pose_stamped=ps)
+
+  raise rospy.ServiceException('Unknown object with id: {}'.format(object_id))
+  
+def state_cb(msg):
+  global world_state
+  world_state = msg
+
+rospy.init_node('KB')
+
+rospy.Subscriber('/world_state', WorldState, state_cb)
+rospy.Service('/lingua/world/objects/search', FindObjects, get_objects)
+rospy.Service('/lingua/world/objects/get_pose', GetObjectPose, get_object_position)
+
+rospy.spin()

@@ -1,0 +1,4 @@
+<launch>
+  <include file="$(find wire_core)/launch/start.launch" />
+  <!--<node pkg="lingua_world" type="world" name="lingua_world" />-->
+</launch>
