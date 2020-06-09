@@ -1,62 +1,125 @@
 #!/usr/bin/env python
 import rospy
 import json
+import pymongo
 
 from geometry_msgs.msg import PoseStamped, Pose
 from wire_msgs.msg import WorldState
 
+from lingua_world.srv import Assert, AssertResponse
 from lingua_world.srv import FindObjects, FindObjectsResponse
 from lingua_world.srv import GetObjectPose, GetObjectPoseResponse
 
-world_state = None
+import pddl
 
-def get_objects(req):
-  search = json.loads(req.query)
-  found = []
-  
-  for obj in world_state.objects:
-    matches = []
+class World:
+  def __init__(self):
+    self.client = pymongo.MongoClient()
+    self.db = self.client.lingua
 
-    for prop in obj.properties:
-      prop_id = prop.attribute
-      if prop_id in search and search[prop_id] in prop.pdf.values:
-        matches.append(prop_id)
+    self.collection = self.db.objects
+
+    self.sub_state = rospy.Subscriber('/world_state', WorldState, self.state_cb)
     
-    if len(set(search.keys()).difference(matches)) == 0:
-      found.append(obj.ID)
+    self.srv_search = rospy.Service('/lingua/world/query', FindObjects, self.query_cb)
+    self.srv_assert = rospy.Service('/lingua/world/assert', Assert, self.query_cb)
 
-  return FindObjectsResponse(ids=found)
+    self.srv_pose = rospy.Service('/lingua/world/get_pose', GetObjectPose, self.get_pose_cb)
 
-def get_object_position(req):
-  object_id = req.object_id
+    self.callbacks = {
+      'on': lambda arg1, arg2: ['0'],
+    }
+  
+  def state_cb(self, msg):
+    current_ids = [e['object_id'] for e in self.collection.find(projection=['object_id'])]
+    inserted_ids = []
 
-  for obj in world_state.objects:
-    if obj.ID == object_id:
+    for obj in msg.objects:
+      entry = {
+        'object_id': obj.ID,
+        'attributes': {}
+      }
+
       for prop in obj.properties:
         if prop.attribute == 'position':
-          ps = PoseStamped()
+          entry['position'] = {
+            'header': {
+              'frame_id': msg.header.frame_id,
+              'stamp': rospy.Time.now().to_sec()
+            },
+            'pose': {
+              'position': {
+                'x': prop.pdf.data[1],
+                'y': prop.pdf.data[2],
+                'z': prop.pdf.data[3]
+              },
+              'orientation': {
+                'x': 0,
+                'y': 0,
+                'z': 0,
+                'w': 1
+              }
+            }
+          }
+        else:
+          entry['attributes'][prop.attribute] = prop.pdf.values
+      
+      self.collection.replace_one({'object_id': obj.ID}, entry, upsert=True)
+      inserted_ids.append(obj.ID)
 
-          ps.header.frame_id = world_state.header.frame_id
-          ps.header.stamp = rospy.Time.now()
+    to_remove = list(set(current_ids).difference(inserted_ids))
 
-          ps.pose.position.x = prop.pdf.data[1]
-          ps.pose.position.y = prop.pdf.data[2]
-          ps.pose.position.z = prop.pdf.data[3]
-          
-          ps.pose.orientation.w = 1
+    if to_remove:
+      self.collection.delete_many({'object_id': to_remove})
 
-          return GetObjectPoseResponse(pose_stamped=ps)
+  def query_cb(self, req):
+    result = pddl.evaluate(self, req.query)
+    if pddl.is_iterable(result):
+      return FindObjectsResponse(ids=[int(idx) for idx in pddl.logical_split(result)[1:]])
+    return FindObjectsResponse(ids=[int(result)])  
+    
+  def assert_cb(self, req):
+    try:
+      result = pddl.evaluate(self, req.query)
+      return AssertResponse(result=True)
+    except pddl.errors.NullStatement:
+      return AssertResponse(result=False)
+      
+  def get_pose_cb(self, req):
+    obj = self.collection.find_one({'object_id': req.object_id})
+    
+    if not obj:
+      rospy.ServiceException('Unknown object with id: {}'.format(req.object_id))
 
-  raise rospy.ServiceException('Unknown object with id: {}'.format(object_id))
-  
-def state_cb(msg):
-  global world_state
-  world_state = msg
+    data = obj['position']
+    ps = PoseStamped()
+    
+    ps.header.frame_id = data['header']['frame_id']
+    ps.header.stamp = rospy.Time.from_sec(data['header']['stamp'])
 
-rospy.init_node('KB')
+    ps.pose.position.x = data['pose']['position']['x']
+    ps.pose.position.y = data['pose']['position']['y']
+    ps.pose.position.z = data['pose']['position']['z']
+    
+    ps.pose.orientation.w = 1
 
-rospy.Subscriber('/world_state', WorldState, state_cb)
-rospy.Service('/lingua/world/objects/search', FindObjects, get_objects)
-rospy.Service('/lingua/world/objects/get_pose', GetObjectPose, get_object_position)
+    return GetObjectPoseResponse(pose_stamped=ps)
 
-rospy.spin()
+  def ask(self, query):
+    args = pddl.logical_split(query)
+    
+    if args[0] in self.callbacks:
+      return self.callbacks[args[0]](*args[1:])
+
+    result = self.collection.find({'attributes.{}'.format(args[0]): args[1]})
+    return [str(item['object_id']) for item in result]
+    # return ['0']
+
+
+def main():
+  rospy.init_node('world_model')
+  world = World()
+  rospy.spin()
+
+if __name__ == '__main__':
+  main()
