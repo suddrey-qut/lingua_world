@@ -13,7 +13,8 @@ from lingua_world.srv import GetObjectPose, GetObjectPoseResponse
 
 from std_srvs.srv import Empty
 
-import pddl
+import lingua_pddl as pddl
+from lingua_kb.srv import Tell, TellRequest
 
 def is_open(arg0):
   if arg0.startswith('g'):
@@ -32,21 +33,24 @@ class World:
 
     self.srv_clear = rospy.Service('/lingua/world/clear', Empty, self.clear_cb)
     
-    self.srv_search = rospy.Service('/lingua/world/query', FindObjects, self.query_cb)
-    self.srv_assert = rospy.Service('/lingua/world/assert', Assert, self.assert_cb)
-
     self.srv_pose = rospy.Service('/lingua/world/get_pose', GetObjectPose, self.get_pose_cb)
+
+    self.kb_tell = rospy.ServiceProxy('/kb/tell', Tell)
 
     self.callbacks = {
       'on': lambda arg1, arg2: ['0'],
       'open': is_open
     }
+
+    self.collection.remove({'transient': True})
   
   def state_cb(self, msg):
+    print('state update')
     for obj in msg.objects:
       entry = {
         'object_id': str(obj.ID),
-        'attributes': {}
+        'attributes': [],
+        'transient': True
       }
 
       for prop in obj.properties:
@@ -71,30 +75,10 @@ class World:
             }
           }
         else:
-          entry['attributes'][prop.attribute] = prop.pdf.values
-      
+          entry['attributes'].append({'key': prop.attribute, 'value': prop.pdf.values})
+                
       self.collection.replace_one({'object_id': entry['object_id']}, entry, upsert=True)
-      
-  def query_cb(self, req):
-    result = pddl.evaluate(self, req.query)
-    if pddl.is_iterable(result):
-      return FindObjectsResponse(ids=pddl.logical_split(result)[1:])
-    return FindObjectsResponse(ids=[result])  
-    
-  def assert_cb(self, req):
-    if pddl.is_query(req.query):
-      try:
-        pddl.evaluate(self, req.query)
-      except pddl.errors.NullStatement:
-        return AssertResponse(result=False)
-    
-    result = self.ask(req.query)
-    
-    if len(result) > 0:
-      return AssertResponse(result=True)
-    
-    return AssertResponse(result=False)
-      
+     
   def get_pose_cb(self, req):
     obj = self.collection.find_one({'object_id': req.object_id})
     
@@ -116,21 +100,7 @@ class World:
     return GetObjectPoseResponse(pose_stamped=ps)
 
   def clear_cb(self, req):
-    self.collection.delete_many({})
-
-  def ask(self, query):
-    args = pddl.logical_split(query)
-    
-    if args[0] in self.callbacks:
-      return self.callbacks[args[0]](*args[1:])
-    
-    if args[2] == '?':
-      result = self.collection.find({'attributes.{}'.format(args[0]): args[1]})
-      return [str(item['object_id']) for item in result]
-    
-    result = self.collection.find({'object_id': args[2], 'attributes.{}'.format(args[0]): args[1]})
-    return [str(item['object_id']) for item in result]
-    # return ['0']
+    self.collection.delete_many({'transient': True})
 
 
 def main():
