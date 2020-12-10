@@ -16,12 +16,6 @@ from std_srvs.srv import Empty
 import lingua_pddl as pddl
 from lingua_kb.srv import Tell, TellRequest
 
-def is_open(arg0):
-  if arg0.startswith('g'):
-    msg = rospy.wait_for_message('/franka_gripper/joint_states', JointState)
-    return [arg0] if msg.position[0] > 0.035 and msg.position[1] > 0.035 else []
-  return []
-
 class World:
   def __init__(self):
     self.client = pymongo.MongoClient()
@@ -36,16 +30,8 @@ class World:
     self.srv_pose = rospy.Service('/lingua/world/get_pose', GetObjectPose, self.get_pose_cb)
 
     self.kb_tell = rospy.ServiceProxy('/kb/tell', Tell)
-
-    self.callbacks = {
-      'on': lambda arg1, arg2: ['0'],
-      'open': is_open
-    }
-
-    self.collection.remove({'transient': True})
   
   def state_cb(self, msg):
-    print('state update')
     for obj in msg.objects:
       entry = {
         'object_id': str(obj.ID),
@@ -83,7 +69,7 @@ class World:
     obj = self.collection.find_one({'object_id': req.object_id})
     
     if not obj:
-      rospy.ServiceException('Unknown object with id: {}'.format(req.object_id))
+      raise rospy.ServiceException('Unknown object with id: {}'.format(req.object_id))
 
     data = obj['position']
     ps = PoseStamped()
