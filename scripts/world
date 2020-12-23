@@ -2,9 +2,9 @@
 import rospy
 import json
 import pymongo
-
+import timeit
 from geometry_msgs.msg import PoseStamped, Pose
-from wire_msgs.msg import WorldState
+from lingua_world.msg import WorldState
 from sensor_msgs.msg import JointState
 
 from lingua_world.srv import Assert, AssertResponse
@@ -45,38 +45,19 @@ class World:
     self.collection.remove({'transient': True})
   
   def state_cb(self, msg):
-    print('state update')
-    for obj in msg.objects:
-      entry = {
-        'object_id': str(obj.ID),
-        'attributes': [],
-        'transient': True
-      }
+    self.collection.remove({'transient': True, 'time': {'$lt': timeit.default_timer() - 5}})
+    print('Removed')
+    for idx, entry in enumerate(msg.objects):
+      entry = json.loads(entry)
+      tag = 'o'
 
-      for prop in obj.properties:
-        if prop.attribute == 'position':
-          entry['position'] = {
-            'header': {
-              'frame_id': msg.header.frame_id,
-              'stamp': rospy.Time.now().to_sec()
-            },
-            'pose': {
-              'position': {
-                'x': prop.pdf.data[1],
-                'y': prop.pdf.data[2],
-                'z': prop.pdf.data[3]
-              },
-              'orientation': {
-                'x': 0,
-                'y': 0,
-                'z': 0,
-                'w': 1
-              }
-            }
-          }
-        else:
-          entry['attributes'].append({'key': prop.attribute, 'value': prop.pdf.values})
-                
+      if 'attributes' in entry:
+        for attr in entry['attributes']:
+          if attr['key'] == 'color':
+            tag = attr['value'][0]
+      entry['object_id'] = '{}_{}'.format(tag, idx)
+      entry['time'] = timeit.default_timer()
+
       self.collection.replace_one({'object_id': entry['object_id']}, entry, upsert=True)
      
   def get_pose_cb(self, req):
@@ -85,6 +66,7 @@ class World:
     if not obj:
       rospy.ServiceException('Unknown object with id: {}'.format(req.object_id))
 
+    print(obj)
     data = obj['position']
     ps = PoseStamped()
     
@@ -95,7 +77,10 @@ class World:
     ps.pose.position.y = data['pose']['position']['y']
     ps.pose.position.z = data['pose']['position']['z']
     
-    ps.pose.orientation.w = 1
+    ps.pose.orientation.x = data['pose']['orientation']['x']
+    ps.pose.orientation.y = data['pose']['orientation']['y']
+    ps.pose.orientation.z = data['pose']['orientation']['z']
+    ps.pose.orientation.w = data['pose']['orientation']['w']
 
     return GetObjectPoseResponse(pose_stamped=ps)
 

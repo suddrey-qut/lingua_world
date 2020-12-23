@@ -1,0 +1,46 @@
+#!/usr/bin/env python
+import rospy
+import json
+import pymongo
+import tf2_ros
+from geometry_msgs.msg import TransformStamped
+
+rospy.init_node('world_markers')
+
+broadcaster = tf2_ros.TransformBroadcaster()
+
+
+client = pymongo.MongoClient()
+db = client.lingua
+
+collection = db.objects
+
+r = rospy.Rate(0.5)
+
+while not rospy.is_shutdown():
+  cursor = collection.find({})
+
+  for item in cursor:
+    if not 'position' in item:
+      continue
+    
+    t = TransformStamped()
+
+    t.header.frame_id = str(item['position']['header']['frame_id'])
+    t.child_frame_id = '{}'.format(item['object_id'])
+
+    t.transform.translation.x = item['position']['pose']['position']['x']
+    t.transform.translation.y = item['position']['pose']['position']['y']
+    t.transform.translation.z = item['position']['pose']['position']['z']
+
+    t.transform.rotation.x = item['position']['pose']['orientation']['x']
+    t.transform.rotation.y = item['position']['pose']['orientation']['y']
+    t.transform.rotation.z = item['position']['pose']['orientation']['z']
+    t.transform.rotation.w = item['position']['pose']['orientation']['w']
+    
+    t.header.stamp = rospy.Time.now()
+
+    broadcaster.sendTransform(t)
+
+  r.sleep()
+
