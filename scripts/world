@@ -3,6 +3,9 @@ import rospy
 import json
 import pymongo
 import timeit
+
+import uuid
+
 from geometry_msgs.msg import PoseStamped, Pose
 from lingua_world.msg import WorldState
 from sensor_msgs.msg import JointState
@@ -10,17 +13,12 @@ from sensor_msgs.msg import JointState
 from lingua_world.srv import Assert, AssertResponse
 from lingua_world.srv import FindObjects, FindObjectsResponse
 from lingua_world.srv import GetObjectPose, GetObjectPoseResponse
+from lingua_world.srv import SetObjectPose, SetObjectPoseResponse
 
 from std_srvs.srv import Empty
 
 import lingua_pddl as pddl
 from lingua_kb.srv import Tell, TellRequest
-
-def is_open(arg0):
-  if arg0.startswith('g'):
-    msg = rospy.wait_for_message('/franka_gripper/joint_states', JointState)
-    return [arg0] if msg.position[0] > 0.035 and msg.position[1] > 0.035 else []
-  return []
 
 class World:
   def __init__(self):
@@ -33,20 +31,14 @@ class World:
 
     self.srv_clear = rospy.Service('/lingua/world/clear', Empty, self.clear_cb)
     
-    self.srv_pose = rospy.Service('/lingua/world/get_pose', GetObjectPose, self.get_pose_cb)
+    self.set_pose = rospy.Service('/lingua/world/set_pose', SetObjectPose, self.set_pose_cb)
+    self.get_pose = rospy.Service('/lingua/world/get_pose', GetObjectPose, self.get_pose_cb)
 
     self.kb_tell = rospy.ServiceProxy('/kb/tell', Tell)
-
-    self.callbacks = {
-      'on': lambda arg1, arg2: ['0'],
-      'open': is_open
-    }
-
-    self.collection.remove({'transient': True})
   
   def state_cb(self, msg):
     self.collection.remove({'transient': True, 'time': {'$lt': timeit.default_timer() - 5}})
-    print('Removed')
+    
     for idx, entry in enumerate(msg.objects):
       entry = json.loads(entry)
       tag = 'o'
@@ -64,7 +56,7 @@ class World:
     obj = self.collection.find_one({'object_id': req.object_id})
     
     if not obj:
-      rospy.ServiceException('Unknown object with id: {}'.format(req.object_id))
+      raise rospy.ServiceException('Unknown object with id: {}'.format(req.object_id))
 
     print(obj)
     data = obj['position']
@@ -83,6 +75,66 @@ class World:
     ps.pose.orientation.w = data['pose']['orientation']['w']
 
     return GetObjectPoseResponse(pose_stamped=ps)
+
+  def set_pose_cb(self, req):
+    
+    idx = req.object_id if req.object_id else str(uuid.uuid4())
+    class_name = req.class_label
+
+    if not class_name:
+      raise rospy.ServiceException('class_name cannot be empty')
+    
+    obj = {
+      "object_id": idx,
+      "attributes" : [ 
+          {
+              "value" : [ 
+                  class_name
+              ],
+              "key" : "class_label"
+          }
+      ],
+      "transient" : True,
+      "position" : {
+          "header" : {
+              "stamp" : 0,
+              "frame_id" : "panda_link0"
+          },
+          "pose" : {
+              "position" : {
+                  "x" : req.pose_stamped.pose.position.x,
+                  "y" : req.pose_stamped.pose.position.y,
+                  "z" : req.pose_stamped.pose.position.z
+              },
+              "orientation" : {
+                  "x" : req.pose_stamped.pose.orientation.x,
+                  "y" : req.pose_stamped.pose.orientation.y,
+                  "z" : req.pose_stamped.pose.orientation.z,
+                  "w" : req.pose_stamped.pose.orientation.w
+              }
+          }
+        }
+      }
+
+    if req.overwrite:
+      print('Remove:', {
+        'attributes': { '$all': [
+          {'$elemMatch': {'key': "class_label"}}, 
+          {'$elemMatch': {'value': class_name}}
+        ]}
+      })
+
+      self.collection.remove({
+        'attributes': { '$all': [
+          {'$elemMatch': {'key': "class_label"}}, 
+          {'$elemMatch': {'value': class_name}}
+        ]}
+      })
+
+    print(obj)
+    self.collection.insert(obj)
+
+    return True
 
   def clear_cb(self, req):
     self.collection.delete_many({'transient': True})

@@ -59,6 +59,7 @@ add_service_files(
   Assert.srv
   FindObjects.srv
   GetObjectPose.srv
+  SetObjectPose.srv
 )
 
 ## Generate actions in the 'action' folder

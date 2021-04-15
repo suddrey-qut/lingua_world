@@ -1,0 +1,6 @@
+string object_id
+string class_label
+geometry_msgs/PoseStamped pose_stamped
+bool overwrite
+---
+bool success
