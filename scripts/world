@@ -98,7 +98,7 @@ class World:
       "position" : {
           "header" : {
               "stamp" : 0,
-              "frame_id" : "panda_link0"
+              "frame_id" : req.pose_stamped.header.frame_id
           },
           "pose" : {
               "position" : {
