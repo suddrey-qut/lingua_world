@@ -16,6 +16,7 @@ from lingua_world.srv import GetObjectPose, GetObjectPoseResponse
 from lingua_world.srv import SetObjectPose, SetObjectPoseResponse
 
 from std_srvs.srv import Empty
+from rv_msgs.msg import ManipulatorState
 
 import lingua_pddl as pddl
 from lingua_kb.srv import Tell, TellRequest
@@ -53,12 +54,12 @@ class World:
       self.collection.replace_one({'object_id': entry['object_id']}, entry, upsert=True)
      
   def get_pose_cb(self, req):
+    
     obj = self.collection.find_one({'object_id': req.object_id})
     
     if not obj:
       raise rospy.ServiceException('Unknown object with id: {}'.format(req.object_id))
 
-    print(obj)
     data = obj['position']
     ps = PoseStamped()
     
