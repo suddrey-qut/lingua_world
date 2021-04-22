@@ -3,8 +3,10 @@ import rospy
 import json
 import pymongo
 import timeit
+import tf2_ros
 
 import uuid
+from geometry_msgs.msg import TransformStamped
 
 from geometry_msgs.msg import PoseStamped, Pose
 from lingua_world.msg import WorldState
@@ -36,7 +38,11 @@ class World:
     self.get_pose = rospy.Service('/lingua/world/get_pose', GetObjectPose, self.get_pose_cb)
 
     self.kb_tell = rospy.ServiceProxy('/kb/tell', Tell)
-  
+    
+    self.broadcaster = None
+    if True or rospy.has_param('~publish_transforms'):
+      self.broadcaster = self.broadcaster = tf2_ros.TransformBroadcaster()
+ 
   def state_cb(self, msg):
     self.collection.remove({'transient': True, 'time': {'$lt': timeit.default_timer() - 5}})
     
@@ -61,19 +67,7 @@ class World:
       raise rospy.ServiceException('Unknown object with id: {}'.format(req.object_id))
 
     data = obj['position']
-    ps = PoseStamped()
-    
-    ps.header.frame_id = data['header']['frame_id']
-    ps.header.stamp = rospy.Time.from_sec(data['header']['stamp'])
-
-    ps.pose.position.x = data['pose']['position']['x']
-    ps.pose.position.y = data['pose']['position']['y']
-    ps.pose.position.z = data['pose']['position']['z']
-    
-    ps.pose.orientation.x = data['pose']['orientation']['x']
-    ps.pose.orientation.y = data['pose']['orientation']['y']
-    ps.pose.orientation.z = data['pose']['orientation']['z']
-    ps.pose.orientation.w = data['pose']['orientation']['w']
+    ps = self.position_to_pose(data)
 
     return GetObjectPoseResponse(pose_stamped=ps)
 
@@ -140,11 +134,51 @@ class World:
   def clear_cb(self, req):
     self.collection.delete_many({'transient': True})
 
+  def position_to_pose(self, data):
+    ps = PoseStamped()
+    
+    ps.header.frame_id = data['header']['frame_id']
+    ps.header.stamp = rospy.Time.from_sec(data['header']['stamp'])
 
+    ps.pose.position.x = data['pose']['position']['x']
+    ps.pose.position.y = data['pose']['position']['y']
+    ps.pose.position.z = data['pose']['position']['z']
+    
+    ps.pose.orientation.x = data['pose']['orientation']['x']
+    ps.pose.orientation.y = data['pose']['orientation']['y']
+    ps.pose.orientation.z = data['pose']['orientation']['z']
+    ps.pose.orientation.w = data['pose']['orientation']['w']
+
+    return ps
+
+  def publish_transform(self, name, ps):
+    if not self.broadcaster:
+      return
+
+    t = TransformStamped()
+
+    t.header.frame_id = ps.header.frame_id
+    t.header.stamp = rospy.Time.now()
+    t.child_frame_id = name
+
+    t.transform.translation = ps.pose.position
+    t.transform.rotation = ps.pose.orientation
+
+    self.broadcaster.sendTransform(t)
+
+  def run(self):
+    while not rospy.is_shutdown():
+      if self.broadcaster:
+        objects = self.collection.find({})
+        for object in objects:
+          ps = self.position_to_pose(object['position'])
+          self.publish_transform(object['object_id'], ps)
+
+      rospy.sleep(0.01)
 def main():
   rospy.init_node('world_model')
   world = World()
-  rospy.spin()
+  world.run()
 
 if __name__ == '__main__':
   main()
