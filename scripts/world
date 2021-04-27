@@ -40,7 +40,8 @@ class World:
     self.kb_tell = rospy.ServiceProxy('/kb/tell', Tell)
     
     self.broadcaster = None
-    if True or rospy.has_param('~publish_transforms'):
+
+    if rospy.has_param('/world/broadcast_transforms'):
       self.broadcaster = self.broadcaster = tf2_ros.TransformBroadcaster()
  
   def state_cb(self, msg):
@@ -170,9 +171,10 @@ class World:
     while not rospy.is_shutdown():
       if self.broadcaster:
         objects = self.collection.find({})
-        for object in objects:
-          ps = self.position_to_pose(object['position'])
-          self.publish_transform(object['object_id'], ps)
+        for obj in objects:
+          if 'position' in obj:
+            ps = self.position_to_pose(obj['position'])
+            self.publish_transform(obj['object_id'], ps)
 
       rospy.sleep(0.01)
 def main():
